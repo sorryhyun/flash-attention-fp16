@@ -42,5 +42,4 @@ A wheel loads only against the torch it was built on. `uv sync` puts the pinned 
 
 ## Licence
 
-FlashAttention is BSD-3-Clause, Copyright (c) 2022 the Princeton / Stanford authors; see `LICENSE`
-and `AUTHORS`.
+FlashAttention is BSD-3-Clause, copyright its contributors; see `LICENSE` and `AUTHORS`.

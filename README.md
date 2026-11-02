@@ -1,4 +1,4 @@
-# flash-attention-sm120
+# flash-attention-fp16
 
 FlashAttention 2.8.3 built for RTX 50-series cards (sm_120), with the 128×32 forward tile.
 
@@ -43,7 +43,7 @@ training step goes from 1071–1082 ms to 1022 ms at the same peak memory.
 Releases carry a wheel per torch minor, matched to the tag. Linux x86_64, CPython 3.13:
 
 ```bash
-gh release download <tag> -R sorryhyun/flash-attention-sm120 -p '*.whl'
+gh release download <tag> -R sorryhyun/flash-attention-fp16 -p '*.whl'
 uv pip install --no-deps --force-reinstall ./flash_attn-*.whl
 ```
 

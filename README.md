@@ -11,6 +11,10 @@ limits the build to what these wheels are for:
   `this FA2 build holds head dim 128 only`.
 - `-std=c++20`, which torch 2.14's headers need.
 
+`patches/fp16acc.patch` adds a backward with dP, dV, dK and dQ accumulated in fp16, for bf16 input at
+head dim 128 with no dropout, causal, window, alibi, softcap or `deterministic`. Other calls take the
+stock path, and `FLASH_ATTN_FP16ACC=0` forces it. S keeps fp32 accumulation.
+
 ## Measured
 
 RTX 5070 Ti, bf16, ms per call, against the wheel's 128×64:
@@ -22,6 +26,17 @@ RTX 5070 Ti, bf16, ms per call, against the wheel's 128×64:
 | self, q `[1, 4600, 24, 128]`, random input | 2.831 → 2.684 (1.055x) | 9.848 → 9.670 (1.018x) |
 
 Median distance from fp32 on 48 captured calls: self 0.00170 → 0.00169, cross 0.00181 → 0.00175.
+
+With `fp16acc.patch`, same card:
+
+| | stock backward | fp16acc backward | backward |
+|---|---|---|---|
+| self, q `[1, 4131, 16, 128]` | 3.787 | 2.973 | 1.274x |
+| cross, Lk 512 | 0.607 | 0.619 | 0.980x |
+| self, q `[1, 4600, 24, 128]`, random input | 6.992 | 5.628 | 1.242x |
+
+dQ, dK, dV sit at 0.74–0.97x stock's median distance from fp32 on 48 captured calls. A real MOSS-Image
+training step goes from 1071–1082 ms to 1022 ms at the same peak memory.
 
 ## Install
 

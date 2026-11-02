@@ -10,6 +10,7 @@ echo "1e71dd64a9e0280e0447b8a0c2541bad4bf6ac65bdeaa2f90e51a9e57de0370d  $WORK/fl
 tar -xzf "$WORK/flash_attn-2.8.3.tar.gz" -C "$WORK"
 cd "$WORK/flash_attn-2.8.3"
 patch -p1 < "$HERE/patches/sm120.patch"
+patch -p1 < "$HERE/patches/fp16acc.patch"
 FLASH_ATTN_CUDA_ARCHS=120 FLASH_ATTENTION_FORCE_BUILD=TRUE BUILD_TARGET=cuda MAX_JOBS=${MAX_JOBS:-6} \
   FLASH_ATTN_LOCAL_VERSION=${LOCAL_VERSION:-sm120.hdim128.cu132torch2.14} \
   "$PY" setup.py bdist_wheel

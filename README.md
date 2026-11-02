@@ -7,8 +7,8 @@ exposes no option to pick another. `patches/sm120.patch` sends cc 12 to the tile
 limits the build to what these wheels are for:
 
 - `is_sm8x` also true on `cc_major == 12`, in `run_mha_fwd_hdim128` only.
-- sm_120 only, head dim 128 only. Any other head dim raises
-  `this FA2 build holds head dim 128 only`.
+- sm_120 only, head dims 64 and 128 (MOSS-Image and Anima, whose `llm_adapter` runs 64). Any other
+  head dim raises `this FA2 build holds head dims 64 and 128 only`.
 - `-std=c++20`, which torch 2.14's headers need.
 
 `patches/fp16acc.patch` adds a backward with dP, dV, dK and dQ accumulated in fp16, for bf16 input at

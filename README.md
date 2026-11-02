@@ -40,7 +40,7 @@ training step goes from 1071–1082 ms to 1022 ms at the same peak memory.
 
 ## Install
 
-Releases carry a wheel per torch minor, matched to the tag. Linux x86_64, CPython 3.13:
+Releases carry a wheel per torch minor, matched to the tag, for CPython 3.13. Linux x86_64:
 
 ```bash
 gh release download <tag> -R sorryhyun/flash-attention-fp16 -p '*.whl'
@@ -54,6 +54,8 @@ A wheel loads only against the torch it was built on. `uv sync` puts the pinned 
 ```bash
 ./build.sh /path/to/.venv/bin/python
 ```
+
+Windows: [windows.md](windows.md). `smoke.py` checks an unpacked wheel on the card.
 
 ## Licence
 

@@ -15,6 +15,12 @@ limits the build to what these wheels are for:
 head dim 128 with no dropout, causal, window, alibi, softcap or `deterministic`. Other calls take the
 stock path, and `FLASH_ATTN_FP16ACC=0` forces it. S keeps fp32 accumulation.
 
+`patches/fwd_fp16acc.patch` accumulates the forward's PV in fp16 inside each 32-key tile, added into
+the fp32 O, for the same bf16, head dim 128 calls with at least 1024 keys. Q, K and V are cast to fp16
+for it; O comes back in bf16. It is on by default; `FLASH_ATTN_FP16ACC_FWD=0` takes the bf16 forward,
+and `FLASH_ATTN_FP16ACC_FWD=all` accumulates QKᵀ in fp16 as well, in the forward and the backward.
+Under 1024 keys the casts cost more than the kernel saves, so those calls keep the bf16 forward.
+
 ## Measured
 
 RTX 5070 Ti, bf16, ms per call, against the wheel's 128×64:
@@ -38,6 +44,16 @@ With `fp16acc.patch`, same card:
 dQ, dK, dV sit at 0.74–0.97x stock's median distance from fp32 on 48 captured calls. A real MOSS-Image
 training step goes from 1071–1082 ms to 1022 ms at the same peak memory.
 
+With `fwd_fp16acc.patch`, same card, forward ms per call:
+
+| | bf16 forward | PV fp16acc | |
+|---|---|---|---|
+| self, q `[1, 4608, 24, 128]`, random input | 2.801 | 2.436 | 1.150x |
+| self, q `[1, 4131, 16, 128]` | 1.550 | 1.327 | 1.168x |
+
+O and dQ, dK, dV sit at 0.96–1.00x the bf16 forward's median distance from fp32 on 48 captured calls.
+A MOSS-Image 1024² render (int8 base, 50 steps, CFG 3) goes from 10.6–10.9 s to 10.3 s.
+
 ## Install
 
 Releases carry a wheel per torch minor, matched to the tag, for CPython 3.13. Linux x86_64:
@@ -55,7 +71,7 @@ A wheel loads only against the torch it was built on. `uv sync` puts the pinned 
 ./build.sh /path/to/.venv/bin/python
 ```
 
-Windows: [windows.md](windows.md). `smoke.py` checks an unpacked wheel on the card.
+`smoke.py` checks an unpacked wheel on the card.
 
 ## Licence
 

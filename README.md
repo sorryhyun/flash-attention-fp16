@@ -19,7 +19,8 @@ stock path, and `FLASH_ATTN_FP16ACC=0` forces it. S keeps fp32 accumulation.
 the fp32 O, for the same bf16, head dim 128 calls with at least 1024 keys. Q, K and V are cast to fp16
 for it; O comes back in bf16. It is on by default; `FLASH_ATTN_FP16ACC_FWD=0` takes the bf16 forward,
 and `FLASH_ATTN_FP16ACC_FWD=all` accumulates QKᵀ in fp16 as well, in the forward and the backward.
-Under 1024 keys the casts cost more than the kernel saves, so those calls keep the bf16 forward.
+Under 1024 keys the casts cost more than the kernel saves on an RTX 5070 Ti, so those calls keep the
+bf16 forward. The threshold is that card's and is not re-tuned per device.
 
 `patches/stable_abi.patch` builds on torch's stable ABI (`TORCH_TARGET_VERSION` 2.12): one
 `cp310-abi3` wheel loads on every torch from 2.12 up, for the CUDA major it was built with. The
@@ -45,8 +46,11 @@ With `fp16acc.patch`, same card:
 | cross, Lk 512 | 0.607 | 0.619 | 0.980x |
 | self, q `[1, 4600, 24, 128]`, random input | 6.992 | 5.628 | 1.242x |
 
-dQ, dK, dV sit at 0.74–0.97x stock's median distance from fp32 on 48 captured calls. A real MOSS-Image
-training step goes from 1071–1082 ms to 1022 ms at the same peak memory.
+dQ, dK, dV sit at 0.74–0.97x stock's median distance from fp32 on 48 captured calls.
+The baseline is the stock bf16 backward, the path these calls would otherwise take. Against
+the stock fp16 kernel on fp16-cast inputs with fp32 accumulation, the fp16acc gradients are 4.4–5.5x
+further from fp32 (`grid.py`): fp16 storage of P and dS gains more over bf16 than fp16 accumulation
+loses. A real MOSS-Image training step goes from 1071–1082 ms to 1022 ms at the same peak memory.
 
 With `fwd_fp16acc.patch`, same card, forward ms per call:
 
@@ -57,6 +61,32 @@ With `fwd_fp16acc.patch`, same card, forward ms per call:
 
 O and dQ, dK, dV sit at 0.96–1.00x the bf16 forward's median distance from fp32 on 48 captured calls.
 A MOSS-Image 1024² render (int8 base, 50 steps, CFG 3) goes from 10.6–10.9 s to 10.3 s.
+
+## Limits
+
+These are the shapes and value ranges of MOSS-Image and Anima, both with QK-norm. Other models can
+fall outside them:
+
+- **Range.** Q, K and V are cast to fp16 with no check. An element past ±65504 gives a non-finite O,
+  dQ and dK. MOSS peaks at |V| 304 and |Q|, |K| 77.
+- **dS underflow.** dS is stored in fp16 with no gain. When dP is small (small V, or a head whose dO
+  rows are far below its largest one) and attention is spread over many keys, dS falls into fp16's
+  subnormals and dQ, dK lose precision. dV keeps it, since P carries a gain of 256. The stock fp16
+  kernel does the same on fp16 input; the stock bf16 kernel does not.
+- **dO scale per (batch, head).** dO is divided by its max over each (batch, head). One outlier row
+  pushes the others toward underflow. A per-row scale cannot be undone in dK and dV, which sum over
+  rows.
+
+`grid.py` measures these against fp32 (H 4, head dim 128), as multiples of stock bf16's error:
+
+| | dQ | dK | dV |
+|---|---|---|---|
+| L 1024–8192, any attention spread, V scale 1, plain dO | 0.75–0.80x | 0.75–0.81x | 0.71–0.73x |
+| L 4096, uniform attention, V scale 0.01 | 6.7x | 6.7x | 0.72x |
+| L 8192, uniform attention, V scale 1, one dO row ×1000 | 7.2x | 6.9x | 0.74x |
+| L 8192, uniform attention, V scale 0.01, one dO row ×1000 | 38x | 48x | 0.74x |
+
+The last row is a relative error of about 0.1. `FLASH_ATTN_FP16ACC=0` takes the stock backward.
 
 ## Install
 
@@ -77,7 +107,8 @@ uv pip install --no-deps --force-reinstall ./flash_attn-*.whl
 ./build.sh /path/to/.venv/bin/python
 ```
 
-`smoke.py` checks an unpacked wheel on the card.
+`smoke.py` checks an unpacked wheel on the card. `grid.py` measures the installed wheel's error against
+fp32 over sequence length, attention spread, V scale and a dO outlier row.
 
 ## Licence
 

@@ -1,0 +1,302 @@
+diff --git a/csrc/flash_attn/flash_api.cpp b/csrc/flash_attn/flash_api.cpp
+index 38d9cb1..c909014 100644
+--- a/csrc/flash_attn/flash_api.cpp
++++ b/csrc/flash_attn/flash_api.cpp
+@@ -83,17 +83,6 @@ Tensor call_aten(const char* name, const char* overload, std::array<StableIValue
+     return torch::stable::detail::to<Tensor>(stack[0]);
+ }
+ 
+-Tensor abs_tensor(const Tensor& t) {
+-    return call_aten<1>("aten::abs", "", {torch::stable::detail::from(t)});
+-}
+-
+-Tensor clamp_min_tensor(const Tensor& t, double min) {
+-    Tensor min_t = torch::stable::new_empty(t, {}, t.scalar_type());
+-    torch::stable::fill_(min_t, min);
+-    return call_aten<2>("aten::clamp_min", "Tensor",
+-                        {torch::stable::detail::from(t), torch::stable::detail::from(min_t)});
+-}
+-
+ }  // namespace
+ 
+ void set_params_fprop(Flash_fwd_params &params,
+@@ -597,7 +586,14 @@ mha_fwd(Tensor &q,         // batch_size x seqlen_q x num_heads x round_multiple
+         q = torch::stable::reshape(torch::stable::transpose(q, 1, 2), {batch_size, 1, num_heads_k * seqlen_q, head_size});
+         softmax_lse = torch::stable::reshape(softmax_lse, {batch_size, num_heads_k * seqlen_q, 1});
+     }
+-    return {out, softmax_lse, p, rng_state};
++    // The fp16 copies go back to the caller so the backward can take them instead of casting
++    // q, k and v again; empty when the bf16 forward ran.
++    if (!fp16acc_fwd) {  // distinct tensors: a custom op's outputs may not alias each other
++        q_in = torch::stable::new_empty(q, {0}, ScalarType::Half);
++        k_in = torch::stable::new_empty(q, {0}, ScalarType::Half);
++        v_in = torch::stable::new_empty(q, {0}, ScalarType::Half);
++    }
++    return {out, softmax_lse, p, rng_state, q_in, k_in, v_in};
+ }
+ 
+ std::vector<Tensor>
+@@ -831,6 +827,7 @@ mha_varlen_fwd(Tensor &q,  // total_q x num_heads x head_size, total_q := \sum_{
+ }
+ 
+ void run_mha_bwd_fp16acc(Flash_bwd_params &params, cudaStream_t stream);
++void amax_abs_bh(const void *dout_bf16, float *out, int b, int s, int h, int d, cudaStream_t stream);
+ 
+ void run_mha_bwd(Flash_bwd_params &params, cudaStream_t stream) {
+     FP16_SWITCH(!params.is_bf16, [&] {
+@@ -883,8 +880,12 @@ mha_bwd(const Tensor &dout,  // batch_size x seqlen_q x num_heads, x multiple_of
+                 "FlashAttention only support fp16 and bf16 data type");
+     STD_TORCH_CHECK(k.scalar_type() == q_dtype, "query and key must have the same dtype");
+     STD_TORCH_CHECK(v.scalar_type() == q_dtype, "query and value must have the same dtype");
+-    STD_TORCH_CHECK(out.scalar_type() == q_dtype, "query and out must have the same dtype");
+-    STD_TORCH_CHECK(dout.scalar_type() == q_dtype, "query and dout must have the same dtype");
++    // fp16 q, k, v with bf16 out and dout: the forward's fp16 copies (fwd's last three outputs),
++    // taken by the fp16acc backward without a cast. Gradients come back in out's dtype.
++    const bool fp16acc_precast = q_dtype == ScalarType::Half && out.scalar_type() == ScalarType::BFloat16;
++    const auto grad_dtype = fp16acc_precast ? ScalarType::BFloat16 : q_dtype;
++    STD_TORCH_CHECK(out.scalar_type() == q_dtype || fp16acc_precast, "query and out must have the same dtype");
++    STD_TORCH_CHECK(dout.scalar_type() == out.scalar_type(), "out and dout must have the same dtype");
+ 
+     CHECK_DEVICE(q); CHECK_DEVICE(k); CHECK_DEVICE(v);
+     CHECK_DEVICE(out); CHECK_DEVICE(dout); CHECK_DEVICE(softmax_lse);
+@@ -927,30 +928,30 @@ mha_bwd(const Tensor &dout,  // batch_size x seqlen_q x num_heads, x multiple_of
+     Tensor dq, dk, dv;
+     if (dq_.has_value()) {
+         dq = dq_.value();
+-        STD_TORCH_CHECK(dq.scalar_type() == q_dtype, "dq must have the same dtype as q");
++        STD_TORCH_CHECK(dq.scalar_type() == grad_dtype, "dq must have the same dtype as out");
+         CHECK_DEVICE(dq);
+         STD_TORCH_CHECK(dq.stride(-1) == 1, "dq must have contiguous last dimension");
+         CHECK_SHAPE(dq, batch_size, seqlen_q, num_heads, head_size);
+     } else {
+-        dq = torch::stable::empty_like(q);
++        dq = torch::stable::new_empty(q, q.sizes(), grad_dtype);
+     }
+     if (dk_.has_value()) {
+         dk = dk_.value();
+-        STD_TORCH_CHECK(dk.scalar_type() == q_dtype, "dk must have the same dtype as q");
++        STD_TORCH_CHECK(dk.scalar_type() == grad_dtype, "dk must have the same dtype as out");
+         CHECK_DEVICE(dk);
+         STD_TORCH_CHECK(dk.stride(-1) == 1, "dk must have contiguous last dimension");
+         CHECK_SHAPE(dk, batch_size, seqlen_k, num_heads_k, head_size);
+     } else {
+-        dk = torch::stable::empty_like(k);
++        dk = torch::stable::new_empty(k, k.sizes(), grad_dtype);
+     }
+     if (dv_.has_value()) {
+         dv = dv_.value();
+-        STD_TORCH_CHECK(dv.scalar_type() == q_dtype, "dv must have the same dtype as q");
++        STD_TORCH_CHECK(dv.scalar_type() == grad_dtype, "dv must have the same dtype as out");
+         CHECK_DEVICE(dv);
+         STD_TORCH_CHECK(dv.stride(-1) == 1, "dv must have contiguous last dimension");
+         CHECK_SHAPE(dv, batch_size, seqlen_k, num_heads_k, head_size);
+     } else {
+-        dv = torch::stable::empty_like(v);
++        dv = torch::stable::new_empty(v, v.sizes(), grad_dtype);
+     }
+ 
+     // bool loop = seqlen_k > blocksize_c;
+@@ -984,20 +985,29 @@ mha_bwd(const Tensor &dout,  // batch_size x seqlen_q x num_heads, x multiple_of
+     Flash_bwd_params params;
+ 
+     const char *fp16acc_env = std::getenv("FLASH_ATTN_FP16ACC");
+-    const bool fp16acc = q_dtype == ScalarType::BFloat16 && head_size == 128 && !is_dropout && !is_causal
++    const bool fp16acc_shape = head_size == 128 && !is_dropout && !is_causal
+         && window_size_left < 0 && window_size_right < 0 && softcap == 0.f && !deterministic
+-        && !alibi_slopes_.has_value() && num_heads_k == num_heads
+-        && !(fp16acc_env && fp16acc_env[0] == '0');
++        && !alibi_slopes_.has_value() && num_heads_k == num_heads;
++    STD_TORCH_CHECK(!fp16acc_precast || (fp16acc_shape && !(fp16acc_env && fp16acc_env[0] == '0')),
++                    "fp16 q, k, v with bf16 out is the fp16acc backward's input; this call cannot take it");
++    const bool fp16acc = fp16acc_precast || (q_dtype == ScalarType::BFloat16 && fp16acc_shape
++        && !(fp16acc_env && fp16acc_env[0] == '0'));
+     Tensor do_scale;
+     Tensor q_in = q, k_in = k, v_in = v, dout_in = dout, dout_bf16;
+     if (fp16acc) {
+-        // Captured dO is about 1e-7, under fp16's normal range.
+-        do_scale = clamp_min_tensor(torch::stable::to(torch::stable::amax(abs_tensor(dout), {1, 3}), ScalarType::Float), 1e-30);
++        // Captured dO is about 1e-7, under fp16's normal range: the pre-kernel writes dO / max|dO|
++        // per (batch, head) in fp16, and the epilogues multiply it back.
+         dout_bf16 = torch::stable::contiguous(dout);
++        do_scale = torch::stable::new_empty(dout_bf16, {batch_size * num_heads}, ScalarType::Float);
++        torch::stable::fill_(do_scale, 1e-30);
++        amax_abs_bh(dout_bf16.data_ptr(), static_cast<float *>(do_scale.data_ptr()),
++                    batch_size, seqlen_q, num_heads, head_size, stream);
+         dout_in = torch::stable::new_empty(dout_bf16, dout_bf16.sizes(), ScalarType::Half);
+-        q_in = torch::stable::to(q, ScalarType::Half);
+-        k_in = torch::stable::to(k, ScalarType::Half);
+-        v_in = torch::stable::to(v, ScalarType::Half);
++        if (!fp16acc_precast) {
++            q_in = torch::stable::to(q, ScalarType::Half);
++            k_in = torch::stable::to(k, ScalarType::Half);
++            v_in = torch::stable::to(v, ScalarType::Half);
++        }
+     }
+ 
+     set_params_dgrad(params,
+@@ -1691,7 +1701,7 @@ STABLE_TORCH_LIBRARY(flash_attn_2, m) {
+     m.def("fwd(Tensor q, Tensor k, Tensor v, Tensor(out!)? out, Tensor? alibi_slopes, "
+           "float p_dropout, float softmax_scale, bool is_causal, int window_size_left, "
+           "int window_size_right, float softcap, bool return_softmax, Tensor? gen) "
+-          "-> (Tensor(out!), Tensor, Tensor, Tensor)");
++          "-> (Tensor(out!), Tensor, Tensor, Tensor, Tensor, Tensor, Tensor)");
+     m.def("varlen_fwd(Tensor q, Tensor k, Tensor v, Tensor(out!)? out, Tensor cu_seqlens_q, "
+           "Tensor cu_seqlens_k, Tensor? seqused_k, Tensor? leftpad_k, Tensor? block_table, "
+           "Tensor? alibi_slopes, int max_seqlen_q, int max_seqlen_k, float p_dropout, "
+diff --git a/csrc/flash_attn/src/flash_bwd_hdim128_fp16acc_sm80.cu b/csrc/flash_attn/src/flash_bwd_hdim128_fp16acc_sm80.cu
+index d361083..31eb4aa 100644
+--- a/csrc/flash_attn/src/flash_bwd_hdim128_fp16acc_sm80.cu
++++ b/csrc/flash_attn/src/flash_bwd_hdim128_fp16acc_sm80.cu
+@@ -4,6 +4,41 @@
+ 
+ namespace FLASH_NAMESPACE {
+ 
++// max |dO| over (seqlen, head_dim) for each (batch, head), into out[b * h + hh], which the caller
++// fills with the floor value first. dO is a contiguous bf16 [b, s, h, d] with d a multiple of 8;
++// blockIdx.y splits the rows, and non-negative floats order like their int bits for atomicMax.
++__global__ void amax_abs_bh_kernel(const uint4 *__restrict__ dout, int *__restrict__ out,
++                                   const int s, const int h, const int d8) {
++    const int b = blockIdx.x / h, hh = blockIdx.x % h;
++    float m = 0.f;
++    for (int row = blockIdx.y; row < s; row += gridDim.y) {
++        const long long base = (static_cast<long long>(b) * s + row) * h + hh;
++        for (int c = threadIdx.x; c < d8; c += blockDim.x) {
++            const uint4 u = dout[base * d8 + c];
++            const unsigned w[4] = {u.x, u.y, u.z, u.w};
++            #pragma unroll
++            for (int i = 0; i < 4; ++i) {
++                // bf16 -> fp32 is a shift; clear the sign for |x|
++                m = fmaxf(m, __uint_as_float((w[i] << 16) & 0x7fffffffu));
++                m = fmaxf(m, __uint_as_float(w[i] & 0x7fff0000u));
++            }
++        }
++    }
++    #pragma unroll
++    for (int o = 16; o > 0; o >>= 1) { m = fmaxf(m, __shfl_xor_sync(0xffffffff, m, o)); }
++    if ((threadIdx.x & 31) == 0) { atomicMax(out + blockIdx.x, __float_as_int(m)); }
++}
++
++void amax_abs_bh(const void *dout_bf16, float *out, int b, int s, int h, int d, cudaStream_t stream) {
++    const int d8 = d / 8;
++    const int threads = d8 < 128 ? 128 : 256;
++    const int rows_per_block = threads / d8;
++    const int ysplit = std::min(64, (s + rows_per_block - 1) / rows_per_block);
++    amax_abs_bh_kernel<<<dim3(b * h, ysplit), threads, 0, stream>>>(
++        static_cast<const uint4 *>(dout_bf16), reinterpret_cast<int *>(out), s, h, d8);
++    C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
+ void run_mha_bwd_fp16acc(Flash_bwd_params &params, cudaStream_t stream) {
+     int device;
+     cudaGetDevice(&device);
+diff --git a/flash_attn/flash_attn_interface.py b/flash_attn/flash_attn_interface.py
+index 47b1c7a..c3d8248 100644
+--- a/flash_attn/flash_attn_interface.py
++++ b/flash_attn/flash_attn_interface.py
+@@ -88,9 +88,9 @@ def _flash_attn_forward(
+     softcap: float,
+     alibi_slopes: Optional[torch.Tensor],
+     return_softmax: bool
+-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
++) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+     q, k, v = [maybe_contiguous(x) for x in (q, k, v)]
+-    out, softmax_lse, S_dmask, rng_state = flash_attn_gpu.fwd(
++    out, softmax_lse, S_dmask, rng_state, q16, k16, v16 = flash_attn_gpu.fwd(
+         q,
+         k,
+         v,
+@@ -105,7 +105,19 @@ def _flash_attn_forward(
+         return_softmax,
+         None,
+     )
+-    return out, softmax_lse, S_dmask, rng_state
++    return out, softmax_lse, S_dmask, rng_state, q16, k16, v16
++
++
++def _fp16acc_fwd_takes(q, k, dropout_p, causal, window_size_left, window_size_right, softcap,
++                       alibi_slopes, return_softmax):
++    """Whether fwd runs the fp16acc forward and returns fp16 copies of q, k, v (mirrors flash_api.cpp)."""
++    env = os.environ.get("FLASH_ATTN_FP16ACC_FWD", "")
++    return (
++        q.dtype == torch.bfloat16 and q.shape[3] == 128 and k.shape[1] >= 1024
++        and k.shape[2] == q.shape[2] and dropout_p == 0.0 and not causal
++        and window_size_left < 0 and window_size_right < 0 and softcap == 0.0
++        and alibi_slopes is None and not return_softmax and env[:1] != "0"
++    )
+ 
+ 
+ @_torch_register_fake_wrapper("flash_attn::_flash_attn_forward")
+@@ -121,18 +133,24 @@ def _flash_attn_forward_fake(
+     softcap: float,
+     alibi_slopes: Optional[torch.Tensor],
+     return_softmax: bool
+-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
++) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+     q, k, v = [maybe_contiguous(x) for x in (q, k, v)]
+     batch_size, seqlen_q, num_heads, head_size = q.shape
+     seqlen_k = k.shape[1]
+     out = torch.empty_like(q)
++    if _fp16acc_fwd_takes(q, k, dropout_p, causal, window_size_left, window_size_right, softcap,
++                          alibi_slopes, return_softmax):
++        q16, k16, v16 = (torch.empty_like(x, dtype=torch.float16) for x in (q, k, v))
++    else:
++        q16 = torch.empty((0,), dtype=torch.float16, device=q.device)
++        k16, v16 = q16, q16
+     softmax_lse = torch.empty((batch_size, num_heads, seqlen_q), dtype=torch.float32, device=q.device, layout=q.layout)
+     p = torch.empty((0,), dtype=q.dtype, device=q.device, layout=q.layout)
+     if return_softmax:
+         p = torch.empty((batch_size, num_heads, round_multiple(seqlen_q, 128), round_multiple(seqlen_k, 128)), dtype=q.dtype, device=q.device, layout=q.layout)
+     rng_state = torch.empty((2,), dtype=torch.int64, device=q.device)
+ 
+-    return out, softmax_lse, p, rng_state
++    return out, softmax_lse, p, rng_state, q16, k16, v16
+ 
+ 
+ if torch.__version__ >= "2.4.0":
+@@ -463,7 +481,7 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
+             q = torch.nn.functional.pad(q, [0, 8 - head_size_og % 8])
+             k = torch.nn.functional.pad(k, [0, 8 - head_size_og % 8])
+             v = torch.nn.functional.pad(v, [0, 8 - head_size_og % 8])
+-        out_padded, softmax_lse, S_dmask, rng_state =  _wrapped_flash_attn_forward(
++        out_padded, softmax_lse, S_dmask, rng_state, *_ =  _wrapped_flash_attn_forward(
+             q,
+             k,
+             v,
+@@ -642,7 +660,7 @@ class FlashAttnKVPackedFunc(torch.autograd.Function):
+             q = torch.nn.functional.pad(q, [0, 8 - head_size_og % 8])
+             k = torch.nn.functional.pad(k, [0, 8 - head_size_og % 8])
+             v = torch.nn.functional.pad(v, [0, 8 - head_size_og % 8])
+-        out_padded, softmax_lse, S_dmask, rng_state = _wrapped_flash_attn_forward(
++        out_padded, softmax_lse, S_dmask, rng_state, *_ = _wrapped_flash_attn_forward(
+             q,
+             k,
+             v,
+@@ -833,7 +851,7 @@ class FlashAttnFunc(torch.autograd.Function):
+             q = torch.nn.functional.pad(q, [0, 8 - head_size_og % 8])
+             k = torch.nn.functional.pad(k, [0, 8 - head_size_og % 8])
+             v = torch.nn.functional.pad(v, [0, 8 - head_size_og % 8])
+-        out_padded, softmax_lse, S_dmask, rng_state = _wrapped_flash_attn_forward(
++        out_padded, softmax_lse, S_dmask, rng_state, q16, k16, v16 = _wrapped_flash_attn_forward(
+             q,
+             k,
+             v,
+@@ -847,6 +865,10 @@ class FlashAttnFunc(torch.autograd.Function):
+             return_softmax=return_softmax and dropout_p > 0,
+         )
+         if is_grad:
++            # The fp16acc forward's fp16 copies of q, k, v feed the fp16acc backward directly
++            # (same bytes as the bf16 originals); FLASH_ATTN_FP16ACC=0 keeps the bf16 path.
++            if q16.numel() and not deterministic and os.environ.get("FLASH_ATTN_FP16ACC", "")[:1] != "0":
++                q, k, v = q16, k16, v16
+             ctx.save_for_backward(q, k, v, out_padded, softmax_lse, rng_state)
+             ctx.dropout_p = dropout_p
+             ctx.softmax_scale = softmax_scale
+@@ -861,7 +883,7 @@ class FlashAttnFunc(torch.autograd.Function):
+     @staticmethod
+     def backward(ctx, dout, *args):
+         q, k, v, out, softmax_lse, rng_state = ctx.saved_tensors
+-        dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
++        dq, dk, dv = (torch.empty_like(x, dtype=out.dtype) for x in (q, k, v))
+         head_size_og = dout.size(3)
+         dout_padded = dout
+         if head_size_og % 8 != 0:

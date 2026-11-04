@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: build.sh <python with the target torch>  (nvcc on PATH, CUDA_HOME set, ninja installed)
+# Usage: build.sh <python with torch 2.12 or later>  (nvcc on PATH, CUDA_HOME set, ninja installed)
 # Each cicc takes about 5 GB, so keep MAX_JOBS at 6 on a 64 GB box.
 set -euo pipefail
 PY=${1:?python}
@@ -13,7 +13,10 @@ patch -p1 < "$HERE/patches/sm120.patch"
 patch -p1 < "$HERE/patches/fp16acc.patch"
 patch -p1 < "$HERE/patches/hdim64.patch"
 patch -p1 < "$HERE/patches/fwd_fp16acc.patch"
+patch -p1 < "$HERE/patches/stable_abi.patch"
+TARGET=${TORCH_TARGET:-2.12}
 FLASH_ATTN_CUDA_ARCHS=120 FLASH_ATTENTION_FORCE_BUILD=TRUE BUILD_TARGET=cuda MAX_JOBS=${MAX_JOBS:-6} \
-  FLASH_ATTN_LOCAL_VERSION=${LOCAL_VERSION:-sm120.hdim64128.fp16acc.fwdpv.cu132torch2.14} \
+  FLASH_ATTN_TORCH_TARGET=$TARGET \
+  FLASH_ATTN_LOCAL_VERSION=${LOCAL_VERSION:-sm120.hdim64128.fp16acc.fwdpv.cu132.torch${TARGET}plus} \
   "$PY" setup.py bdist_wheel
 ls -la "$PWD"/dist/*.whl

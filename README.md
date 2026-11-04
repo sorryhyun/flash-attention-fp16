@@ -21,6 +21,10 @@ for it; O comes back in bf16. It is on by default; `FLASH_ATTN_FP16ACC_FWD=0` ta
 and `FLASH_ATTN_FP16ACC_FWD=all` accumulates QKᵀ in fp16 as well, in the forward and the backward.
 Under 1024 keys the casts cost more than the kernel saves, so those calls keep the bf16 forward.
 
+`patches/stable_abi.patch` builds on torch's stable ABI (`TORCH_TARGET_VERSION` 2.12): one
+`cp310-abi3` wheel loads on every torch from 2.12 up, for the CUDA major it was built with. The
+ops are `torch.ops.flash_attn_2.*`. Dropout raises, since the stable ABI has no generator.
+
 ## Measured
 
 RTX 5070 Ti, bf16, ms per call, against the wheel's 128×64:
@@ -56,14 +60,16 @@ A MOSS-Image 1024² render (int8 base, 50 steps, CFG 3) goes from 10.6–10.9 s 
 
 ## Install
 
-Releases carry a wheel per torch minor, matched to the tag, for CPython 3.13. Linux x86_64:
+Releases up to `v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-cu132-torch2.14` carry a wheel per torch
+minor, for CPython 3.13, and load only against the torch they were built on. `build.sh` now builds
+the stable-ABI wheel. Linux x86_64:
 
 ```bash
 gh release download <tag> -R sorryhyun/flash-attention-fp16 -p '*.whl'
 uv pip install --no-deps --force-reinstall ./flash_attn-*.whl
 ```
 
-A wheel loads only against the torch it was built on. `uv sync` puts the pinned wheel back.
+`uv sync` puts the pinned wheel back.
 
 ## Build
 

@@ -1,26 +1,26 @@
 # Request: a Windows wheel of the current build
 
-Wanted: one Windows wheel with all six patches, on torch's stable ABI, uploaded to the latest release
+Wanted: one Windows wheel with all five patches, on torch's stable ABI, uploaded to the latest release
 next to the Linux wheel:
 
 ```
-release  v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-precast-cu132-torch2.12plus
-wheel    flash_attn-2.8.3+sm120.hdim64128.fp16acc.fwdpv.precast.cu132.torch2.12plus-cp310-abi3-win_amd64.whl
+release  v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-cu132-torch2.12plus
+wheel    flash_attn-2.8.3+sm120.hdim64128.fp16acc.fwdpv.cu132.torch2.12plus-cp310-abi3-win_amd64.whl
 ```
 
 Windows users of `anima_lora` are still on the old per-torch wheel
-(`v2.8.3-sm120-hdim64-128-fp16acc-cu132-torch2.14`): the fp16acc backward without the PV forward or
-precast, loading on torch 2.14 only. The stable-ABI wheel would load on every torch from 2.12 up, as
+(`v2.8.3-sm120-hdim64-128-fp16acc-cu132-torch2.14`): the fp16acc backward without the PV forward,
+loading on torch 2.14 only. The stable-ABI wheel would load on every torch from 2.12 up, as
 the Linux one does.
 
 ## What has and has not been compiled with MSVC
 
 - The old Windows wheel was built with `sm120`, `fp16acc`, `hdim64` and `windows.patch`. Those four and
   the flags below are known to work.
-- `fwd_fp16acc.patch`, `stable_abi.patch` and `precast.patch` have only been compiled with gcc. The
+- `fwd_fp16acc.patch` and `stable_abi.patch` have only been compiled with gcc. The
   stable ABI is the likely trouble: the extension now reaches libtorch only through
   `torch/csrc/stable`, and the cxx side gets `-DPy_LIMITED_API=0x030a0000`, which links `python3.lib`.
-- All seven patches apply cleanly, in the order below, on the 2.8.3 sdist (checked on Linux).
+- All six patches apply cleanly, in the order below, on the 2.8.3 sdist (checked on Linux).
 
 The build needs no GPU. Checking the wheel needs an sm_120 card (RTX 50-series).
 
@@ -58,7 +58,7 @@ uv pip install -p venv setuptools==75.8.0 wheel packaging psutil numpy ninja
 uv pip install -p venv torch==2.14.1 --index-url https://download.pytorch.org/whl/cu132
 
 cd flash_attn-2.8.3
-foreach ($p in 'sm120', 'fp16acc', 'hdim64', 'fwd_fp16acc', 'stable_abi', 'precast', 'windows') {
+foreach ($p in 'sm120', 'fp16acc', 'hdim64', 'fwd_fp16acc', 'stable_abi', 'windows') {
     & 'C:\Program Files\Git\usr\bin\patch.exe' -p1 -i "..\repo\patches\$p.patch"
     if ($LASTEXITCODE) { throw "patch $p" }
 }
@@ -70,7 +70,7 @@ $env:BUILD_TARGET = 'cuda'
 $env:FLASH_ATTENTION_FORCE_BUILD = 'TRUE'
 $env:FLASH_ATTN_CUDA_ARCHS = '120'
 $env:FLASH_ATTN_TORCH_TARGET = '2.12'
-$env:FLASH_ATTN_LOCAL_VERSION = 'sm120.hdim64128.fp16acc.fwdpv.precast.cu132.torch2.12plus'
+$env:FLASH_ATTN_LOCAL_VERSION = 'sm120.hdim64128.fp16acc.fwdpv.cu132.torch2.12plus'
 $env:MAX_JOBS = '6'
 $env:NVCC_FLAGS = '-w --disable-warnings'
 $env:CXXFLAGS = '/w /Zc:preprocessor'
@@ -133,7 +133,7 @@ the pinned wheel back afterwards.
 With write access to the repo, upload after the smoke check passes:
 
 ```powershell
-gh release upload v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-precast-cu132-torch2.12plus (Get-Item dist\*.whl).FullName -R sorryhyun/flash-attention-fp16
+gh release upload v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-cu132-torch2.12plus (Get-Item dist\*.whl).FullName -R sorryhyun/flash-attention-fp16
 ```
 
 Without it, open an issue with the wheel attached, or a link to it, and include:

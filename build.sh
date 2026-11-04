@@ -14,10 +14,9 @@ patch -p1 < "$HERE/patches/fp16acc.patch"
 patch -p1 < "$HERE/patches/hdim64.patch"
 patch -p1 < "$HERE/patches/fwd_fp16acc.patch"
 patch -p1 < "$HERE/patches/stable_abi.patch"
-patch -p1 < "$HERE/patches/precast.patch"
 TARGET=${TORCH_TARGET:-2.12}
 FLASH_ATTN_CUDA_ARCHS=120 FLASH_ATTENTION_FORCE_BUILD=TRUE BUILD_TARGET=cuda MAX_JOBS=${MAX_JOBS:-6} \
   FLASH_ATTN_TORCH_TARGET=$TARGET \
-  FLASH_ATTN_LOCAL_VERSION=${LOCAL_VERSION:-sm120.hdim64128.fp16acc.fwdpv.precast.cu132.torch${TARGET}plus} \
+  FLASH_ATTN_LOCAL_VERSION=${LOCAL_VERSION:-sm120.hdim64128.fp16acc.fwdpv.cu132.torch${TARGET}plus} \
   "$PY" setup.py bdist_wheel
 ls -la "$PWD"/dist/*.whl

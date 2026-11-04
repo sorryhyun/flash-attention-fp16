@@ -26,11 +26,8 @@ bf16 forward. The threshold is that card's and is not re-tuned per device.
 `cp310-abi3` wheel loads on every torch from 2.12 up, for the CUDA major it was built with. The
 ops are `torch.ops.flash_attn_2.*`. Dropout raises, since the stable ABI has no generator.
 
-`patches/precast.patch` hands the fp16acc forward's fp16 copies of Q, K and V back to the caller
-(`fwd`'s last three outputs, empty when the bf16 forward ran) and lets `bwd` take fp16 Q, K, V with
-bf16 O and dO, so `flash_attn_func`'s backward skips its three casts and gets the same bytes. The
-gradients come back in O's dtype. It also replaces `amax(abs(dO))` with one reduction kernel. The
-kernels are unchanged; dK and dV are bitwise those of the self-cast path.
+`precast.patch` (the backward takes the forward's fp16 copies) was released once and dropped: it
+slowed a training step. [`precast.md`](precast.md).
 
 ## Measured
 
@@ -67,10 +64,6 @@ With `fwd_fp16acc.patch`, same card, forward ms per call:
 
 O and dQ, dK, dV sit at 0.96–1.00x the bf16 forward's median distance from fp32 on 48 captured calls.
 A MOSS-Image 1024² render (int8 base, 50 steps, CFG 3) goes from 10.6–10.9 s to 10.3 s.
-
-With `precast.patch`, same card, the MOSS self shape `[1, 4600, 24, 128]`, forward + backward per call
-(torch profiler, boost clocks): 7.95 → 7.73 ms; the backward's three `to(half)` (3 × 81 µs) are gone
-and `abs` + `amax` (48 + 50 µs) became a 68 µs kernel.
 
 Under ncu with locked clocks the fp16acc backward kernel runs the tensor pipe 74% of the time against
 91% for the stock bf16 kernel (5.81 against 8.23 ms). HMMA on the fp16-accumulate path is 2x, but the
@@ -110,7 +103,7 @@ The last row is a relative error of about 0.1. `FLASH_ATTN_FP16ACC=0` takes the 
 
 Releases up to `v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-cu132-torch2.14` carry a wheel per torch
 minor, for CPython 3.13, and load only against the torch they were built on. `build.sh` now builds
-the stable-ABI wheel, with `precast.patch`. Linux x86_64:
+the stable-ABI wheel. Linux x86_64:
 
 ```bash
 gh release download <tag> -R sorryhyun/flash-attention-fp16 -p '*.whl'

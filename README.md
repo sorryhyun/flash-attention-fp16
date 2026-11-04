@@ -125,6 +125,9 @@ uv pip install --no-deps --force-reinstall ./flash_attn-*.whl
 ./build.sh /path/to/.venv/bin/python
 ```
 
+The Windows wheel of the stable-ABI build is not built yet; [`windows.md`](windows.md) is the build
+request, with the MSVC steps.
+
 `smoke.py` checks an unpacked wheel on the card. `grid.py` measures the installed wheel's error against
 fp32 over sequence length, attention spread, V scale and a dO outlier row.
 

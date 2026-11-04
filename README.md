@@ -103,7 +103,8 @@ The last row is a relative error of about 0.1. `FLASH_ATTN_FP16ACC=0` takes the 
 
 Releases up to `v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-cu132-torch2.14` carry a wheel per torch
 minor, for CPython 3.13, and load only against the torch they were built on. `build.sh` now builds
-the stable-ABI wheel. Linux x86_64:
+the stable-ABI wheel. `v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-cu132-torch2.12plus` has it for Linux
+x86_64 and Windows (`win_amd64`). On Linux:
 
 ```bash
 gh release download <tag> -R sorryhyun/flash-attention-fp16 -p '*.whl'
@@ -118,8 +119,8 @@ uv pip install --no-deps --force-reinstall ./flash_attn-*.whl
 ./build.sh /path/to/.venv/bin/python
 ```
 
-The Windows wheel of the stable-ABI build is not built yet; [`windows.md`](windows.md) is the build
-request, with the MSVC steps.
+The Windows wheel is built from the same patches plus `patches/windows.patch` (host C++20,
+`_USE_MATH_DEFINES`, an exported `PyInit`), with MSVC 2022 and `DISTUTILS_USE_SDK=1`.
 
 `smoke.py` checks an unpacked wheel on the card. `grid.py` measures the installed wheel's error against
 fp32 over sequence length, attention spread, V scale and a dO outlier row.

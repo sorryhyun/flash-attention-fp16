@@ -15,8 +15,7 @@ raises `this FA2 build holds head dims 64 and 128 only`. Dropout raises too.
 ## Install
 
 The release `v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-f16in-cu132-torch2.12plus` has one `cp310-abi3`
-wheel for Linux x86_64. The Windows (`win_amd64`) wheel is still the previous release's,
-`v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-cu132-torch2.12plus`, without `f16in`. Both load on any torch
+wheel for Linux x86_64 and one for Windows (`win_amd64`). Both load on any torch
 ≥ 2.12 built for CUDA 13 and CPython ≥ 3.10. The ops are `torch.ops.flash_attn_2.*`.
 
 ```bash
@@ -140,7 +139,9 @@ The last row is a relative error of about 0.1. `FLASH_ATTN_FP16ACC=0` takes the 
 | `f16in.patch` | fp16 Q, K, V with a bf16 `out` in `fwd` and with bf16 O / dO in `bwd`; the one-kernel dO max; `flash_attn_f16in_func` |
 
 The Windows wheel adds `patches/windows.patch` (host C++20, `_USE_MATH_DEFINES`, an exported
-`PyInit`) and is built with MSVC 2022 and `DISTUTILS_USE_SDK=1`.
+`PyInit`) and is built with MSVC 2022 and `DISTUTILS_USE_SDK=1`. Set `VSLANG=1033` on a
+non-English Windows and build from a console: torch decodes `cl`'s version banner with the OEM code
+page, which fails on localized output or with no console attached.
 
 `smoke.py` checks an unpacked wheel on the card. `grid.py` measures the installed wheel's error against
 fp32 over sequence length, attention spread, V scale and a dO outlier row.

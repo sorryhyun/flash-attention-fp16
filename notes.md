@@ -46,3 +46,12 @@ With the PV forward on, precast's backward is back at stock (+55 ms a step) and 
 higher. With it off, precast has nothing to hand over and matches the other builds. The stable ABI
 costs nothing. Likely cause: the three extra fp16 tensors saved per attention call change what the
 compiled graph keeps and what it recomputes under the activation budget. Not separated further.
+
+## Drain assign for dP and dQ (dropped)
+
+dP and dQ are added into fp32 fragments cleared just before, so the add can be an assign: 21% of the
+drain's instructions per tile. Built 2026-11-10 with `f16in.patch`: gradients bitwise, the main
+backward kernel 5106–5136 µs against 4861–4882 µs without it (MOSS self shape, two alternating
+profiles of each build), +5.8%. SASS not read. As with draining every second tile, fewer drain
+instructions did not mean less time on this kernel.
+

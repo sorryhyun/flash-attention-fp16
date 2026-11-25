@@ -1,5 +1,5 @@
-"""Runs an unpacked wheel on an sm_120 card: head dims 64 and 128 give finite gradients, the fp16acc
-forward is on by default above 1024 keys, 96 raises.
+"""Runs an unpacked wheel on an sm_120 card: head dims 64, 72 (the 96 kernel) and 128 give finite
+gradients, 72 matches SDPA, the fp16acc forward is on by default above 1024 keys, 160 raises.
 
     python smoke.py <folder the wheel was unpacked to>
 """
@@ -36,6 +36,26 @@ def grads(heads, head_dim):
 grads(16, 64)
 print("head dim 64: finite")
 
+# PaddleOCR-VL's tower: 16 heads of 72, padded to the 96 kernel
+torch.manual_seed(0)
+q, k, v = (
+    torch.randn(1, 729, 16, 72, device="cuda", dtype=torch.bfloat16).requires_grad_()
+    for _ in range(3)
+)
+out = flash_attn_func(q, k, v)
+out.float().square().sum().backward()
+fa = torch.cat([t.flatten().float() for t in (out, q.grad, k.grad, v.grad)])
+q2, k2, v2 = (t.detach().float().transpose(1, 2).requires_grad_() for t in (q, k, v))
+ref = torch.nn.functional.scaled_dot_product_attention(q2, k2, v2)
+ref.square().sum().backward()
+ref = torch.cat(
+    [t.transpose(1, 2).flatten() for t in (ref.detach(), q2.grad, k2.grad, v2.grad)]
+)
+assert fa.isfinite().all(), "non-finite output or gradient at head dim 72"
+distance = ((fa - ref).norm() / ref.norm()).item()
+print(f"head dim 72: finite, {distance:.4f} from fp32 SDPA")
+assert distance < 0.02
+
 os.environ["FLASH_ATTN_FP16ACC"] = "0"
 stock = grads(24, 128)
 os.environ["FLASH_ATTN_FP16ACC"] = "1"
@@ -69,9 +89,9 @@ for flag in (None, "all"):
     assert distance < 0.01
 
 try:
-    grads(16, 96)
+    grads(16, 160)
 except RuntimeError as e:
-    print(f"head dim 96 raises: {e}")
+    print(f"head dim 160 raises: {e}")
 else:
-    raise AssertionError("head dim 96 ran")
+    raise AssertionError("head dim 160 ran")
 print("ok")

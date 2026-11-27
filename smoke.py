@@ -1,5 +1,6 @@
-"""Runs an unpacked wheel on an sm_120 card: head dims 64, 72 (the 96 kernel) and 128 give finite
-gradients, 72 matches SDPA, the fp16acc forward is on by default above 1024 keys, 160 raises.
+"""Runs an unpacked wheel on an sm_120 card: head dims 64, 72 (the 96 kernel), 128 and 256 give
+finite gradients, 72 and 256 (causal, GQA, varlen) match SDPA, the fp16acc forward is on by default
+above 1024 keys, 160 raises.
 
     python smoke.py <folder the wheel was unpacked to>
 """
@@ -14,7 +15,7 @@ root = Path(sys.argv[1]).resolve()
 sys.path.insert(0, str(root))
 
 import flash_attn_2_cuda  # noqa: E402
-from flash_attn import flash_attn_func  # noqa: E402
+from flash_attn import flash_attn_func, flash_attn_varlen_func  # noqa: E402
 
 assert Path(flash_attn_2_cuda.__file__).parent == root, flash_attn_2_cuda.__file__
 assert torch.cuda.get_device_capability(0)[0] == 12, "not an sm_120 card"
@@ -54,6 +55,35 @@ ref = torch.cat(
 assert fa.isfinite().all(), "non-finite output or gradient at head dim 72"
 distance = ((fa - ref).norm() / ref.norm()).item()
 print(f"head dim 72: finite, {distance:.4f} from fp32 SDPA")
+assert distance < 0.02
+
+# OvisOCR3's LM: 8 Q heads over 2 K/V heads of 256, causal, rows left-padded as two varlen
+# segments (pad, then real); the real segments are checked against fp32 SDPA
+torch.manual_seed(0)
+S, pads = 640, (0, 200)
+q = torch.randn(2 * S, 8, 256, device="cuda", dtype=torch.bfloat16).requires_grad_()
+k, v = (
+    torch.randn(2 * S, 2, 256, device="cuda", dtype=torch.bfloat16).requires_grad_()
+    for _ in range(2)
+)
+cu = torch.tensor([0, pads[0], S, S + pads[1], 2 * S], device="cuda", dtype=torch.int32)
+out = flash_attn_varlen_func(q, k, v, cu, cu, S, S, causal=True)
+real = torch.cat([torch.arange(i * S + p, (i + 1) * S) for i, p in enumerate(pads)]).cuda()
+out[real].float().square().sum().backward()
+fa = torch.cat([t[real].flatten().float() for t in (out, q.grad, k.grad, v.grad)])
+refs = []
+for i, p in enumerate(pads):
+    rows = slice(i * S + p, (i + 1) * S)
+    q2, k2, v2 = (t.detach()[rows].float().transpose(0, 1).requires_grad_() for t in (q, k, v))
+    o2 = torch.nn.functional.scaled_dot_product_attention(
+        q2, k2, v2, is_causal=True, enable_gqa=True
+    )
+    o2.square().sum().backward()
+    refs.append([t.transpose(0, 1) for t in (o2.detach(), q2.grad, k2.grad, v2.grad)])
+ref = torch.cat([torch.cat([r[j] for r in refs]).flatten() for j in range(4)])
+assert fa.isfinite().all(), "non-finite output or gradient at head dim 256"
+distance = ((fa - ref).norm() / ref.norm()).item()
+print(f"head dim 256 (causal GQA varlen): finite, {distance:.4f} from fp32 SDPA")
 assert distance < 0.02
 
 os.environ["FLASH_ATTN_FP16ACC"] = "0"

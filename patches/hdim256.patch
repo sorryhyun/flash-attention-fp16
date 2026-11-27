@@ -1,0 +1,70 @@
+diff --git a/csrc/flash_attn/src/static_switch.h b/csrc/flash_attn/src/static_switch.h
+--- a/csrc/flash_attn/src/static_switch.h
++++ b/csrc/flash_attn/src/static_switch.h
+@@ -100,7 +100,10 @@
+     } else if (HEADDIM > 96 && HEADDIM <= 128) { \
+       constexpr static int kHeadDim = 128; \
+       return __VA_ARGS__();                \
++    } else if (HEADDIM > 192 && HEADDIM <= 256) { \
++      constexpr static int kHeadDim = 256; \
++      return __VA_ARGS__();                \
+     } else {                               \
+-      throw std::runtime_error("this FA2 build holds head dims 64, 96 and 128 only (33 to 128)"); \
++      throw std::runtime_error("this FA2 build holds head dims 64, 96, 128 and 256 only (33 to 128, 193 to 256)"); \
+     }                                      \
+   }()
+diff --git a/setup.py b/setup.py
+--- a/setup.py
++++ b/setup.py
+@@ -237,25 +237,33 @@
+                 "csrc/flash_attn/src/flash_fwd_hdim96_fp16_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_hdim96_bf16_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_hdim128_fp16_sm80.cu",
++                "csrc/flash_attn/src/flash_fwd_hdim256_fp16_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_hdim128_bf16_sm80.cu",
++                "csrc/flash_attn/src/flash_fwd_hdim256_bf16_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_hdim64_fp16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_hdim64_bf16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_hdim96_fp16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_hdim96_bf16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_hdim128_fp16_causal_sm80.cu",
++                "csrc/flash_attn/src/flash_fwd_hdim256_fp16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_hdim128_bf16_causal_sm80.cu",
++                "csrc/flash_attn/src/flash_fwd_hdim256_bf16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim64_fp16_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim64_bf16_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim96_fp16_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim96_bf16_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim128_fp16_sm80.cu",
++                "csrc/flash_attn/src/flash_bwd_hdim256_fp16_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim128_bf16_sm80.cu",
++                "csrc/flash_attn/src/flash_bwd_hdim256_bf16_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim64_fp16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim64_bf16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim96_fp16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim96_bf16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim128_fp16_causal_sm80.cu",
++                "csrc/flash_attn/src/flash_bwd_hdim256_fp16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim128_bf16_causal_sm80.cu",
++                "csrc/flash_attn/src/flash_bwd_hdim256_bf16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_bwd_hdim128_fp16acc_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_hdim128_fp16acc_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_split_hdim64_fp16_sm80.cu",
+@@ -263,13 +271,17 @@
+                 "csrc/flash_attn/src/flash_fwd_split_hdim96_fp16_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_split_hdim96_bf16_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_split_hdim128_fp16_sm80.cu",
++                "csrc/flash_attn/src/flash_fwd_split_hdim256_fp16_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_split_hdim128_bf16_sm80.cu",
++                "csrc/flash_attn/src/flash_fwd_split_hdim256_bf16_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_split_hdim64_fp16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_split_hdim64_bf16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_split_hdim96_fp16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_split_hdim96_bf16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_split_hdim128_fp16_causal_sm80.cu",
++                "csrc/flash_attn/src/flash_fwd_split_hdim256_fp16_causal_sm80.cu",
+                 "csrc/flash_attn/src/flash_fwd_split_hdim128_bf16_causal_sm80.cu",
++                "csrc/flash_attn/src/flash_fwd_split_hdim256_bf16_causal_sm80.cu",
+             ],
+             extra_compile_args={
+                 "cxx": compiler_c17_flag + ["-DPy_LIMITED_API=0x030a0000"] + STABLE_FLAGS,

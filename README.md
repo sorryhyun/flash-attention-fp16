@@ -9,11 +9,11 @@ FlashAttention 2.8.3 for RTX 50-series cards (sm_120), built for MOSS-Image and 
   backward, so under `torch.compile` the casts fuse into the kernel that wrote them;
 - one wheel for every torch from 2.12 up, on torch's stable ABI.
 
-Only sm_120 and head dims 64, 96 and 128 are built: Anima's `llm_adapter` and hayai-ocr run 64,
-PaddleOCR-VL's vision tower runs 72 on the 96 kernel, the DiTs and PaddleOCR-VL's LM run 128. A head
-dim from 33 to 128 runs (FA2 pads it to the next built size); any other raises `this FA2 build holds
-head dims 64, 96 and 128 only`. Dropout raises too. The fp16 paths below are head dim 128 only; 64 and
-96 take the stock kernels.
+Only sm_120 and head dims 64, 96, 128 and 256 are built: Anima's `llm_adapter` and hayai-ocr run 64,
+PaddleOCR-VL's vision tower runs 72 on the 96 kernel, the DiTs and PaddleOCR-VL's LM run 128,
+OvisOCR3's LM full-attention layers run 256. A head dim from 33 to 128 or 193 to 256 runs (FA2 pads it
+to the next built size); any other raises `this FA2 build holds head dims 64, 96, 128 and 256 only`.
+Dropout raises too. The fp16 paths below are head dim 128 only; 64, 96 and 256 take the stock kernels.
 
 ## Install
 
@@ -142,6 +142,7 @@ The last row is a relative error of about 0.1. `FLASH_ATTN_FP16ACC=0` takes the 
 | `stable_abi.patch` | torch's stable ABI (`TORCH_TARGET_VERSION` 2.12), ops under `torch.ops.flash_attn_2` |
 | `f16in.patch` | fp16 Q, K, V with a bf16 `out` in `fwd` and with bf16 O / dO in `bwd`; the one-kernel dO max; `flash_attn_f16in_func` |
 | `hdim96.patch` | head dim 96 (PaddleOCR-VL's tower at 72), stock kernels |
+| `hdim256.patch` | head dim 256 (OvisOCR3's LM full-attention layers), stock kernels: forward 64×64 and the sm86 / 89 backward (99 KB smem, no dropout) |
 
 The Windows wheel adds `patches/windows.patch` (host C++20, `_USE_MATH_DEFINES`, an exported
 `PyInit`) and is built with MSVC 2022 and `DISTUTILS_USE_SDK=1`. Set `VSLANG=1033` on a

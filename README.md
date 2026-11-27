@@ -17,13 +17,13 @@ Dropout raises too. The fp16 paths below are head dim 128 only; 64, 96 and 256 t
 
 ## Install
 
-The release `v2.8.3-sm120-hdim64-96-128-fp16acc-fwdpv-f16in-cu132-torch2.12plus` has one `cp310-abi3`
+The release `v2.8.3-sm120-hdim64-96-128-256-fp16acc-fwdpv-f16in-cu132-torch2.12plus` has one `cp310-abi3`
 wheel for Linux x86_64. The Windows (`win_amd64`) wheel is still the previous release's,
-`v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-f16in-cu132-torch2.12plus`, without head dim 96. Both load on any torch
+`v2.8.3-sm120-hdim64-128-fp16acc-fwdpv-f16in-cu132-torch2.12plus`, without head dims 96 and 256. Both load on any torch
 ≥ 2.12 built for CUDA 13 and CPython ≥ 3.10. The ops are `torch.ops.flash_attn_2.*`.
 
 ```bash
-gh release download v2.8.3-sm120-hdim64-96-128-fp16acc-fwdpv-f16in-cu132-torch2.12plus \
+gh release download v2.8.3-sm120-hdim64-96-128-256-fp16acc-fwdpv-f16in-cu132-torch2.12plus \
   -R sorryhyun/flash-attention-fp16 -p '*linux_x86_64.whl'
 uv pip install --no-deps --force-reinstall ./flash_attn-*.whl
 ```
